@@ -1,18 +1,13 @@
 --[[ 
     ULTIMATE TAS PLAYER - RESUME & CACHE
     Repo: crystalknight-svg/cek
-    
-    Fitur:
-    - Resume System (Lanjut dari posisi stop)
-    - Pause Button
-    - Reset Button (Ulang dari awal)
-    - Smart Caching
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui") -- Tambahan service
 
 local Plr = Players.LocalPlayer
 local Char = Plr.Character or Plr.CharacterAdded:Wait()
@@ -30,10 +25,19 @@ local END_CP = 49
 local TASDataCache = {} 
 local isCached = false  
 local isPlaying = false
+local SavedCP = START_CP    
+local SavedFrame = 1        
 
--- State untuk Resume
-local SavedCP = START_CP    -- Menyimpan index CP terakhir
-local SavedFrame = 1        -- Menyimpan index Frame terakhir
+-- === HELPER FUNCTION (PERBAIKAN ERROR NOTIFY) ===
+local function SendNotif(text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "TAS System";
+            Text = text;
+            Duration = 3;
+        })
+    end)
+end
 
 -- === GUI SETUP ===
 local ScreenGui = Instance.new("ScreenGui")
@@ -41,7 +45,7 @@ local MainFrame = Instance.new("Frame")
 local Title = Instance.new("TextLabel")
 local StartBtn = Instance.new("TextButton")
 local StopBtn = Instance.new("TextButton")
-local ResetBtn = Instance.new("TextButton") -- Tombol Baru
+local ResetBtn = Instance.new("TextButton")
 local StatusLbl = Instance.new("TextLabel")
 local ProgressBar = Instance.new("Frame")
 local ProgressFill = Instance.new("Frame")
@@ -49,14 +53,21 @@ local UICorner = Instance.new("UICorner")
 
 -- Setup GUI Visuals
 ScreenGui.Name = "TAS_Resume_System"
-ScreenGui.Parent = CoreGui
+-- Cek jika dijalankan di executor vs studio
+if gethui then
+    ScreenGui.Parent = gethui()
+elseif game:GetService("CoreGui") then
+    ScreenGui.Parent = game:GetService("CoreGui")
+else
+    ScreenGui.Parent = Plr:WaitForChild("PlayerGui")
+end
 ScreenGui.ResetOnSpawn = false
 
 MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 MainFrame.Position = UDim2.new(0.5, -110, 0.5, -100)
-MainFrame.Size = UDim2.new(0, 220, 0, 220) -- Sedikit lebih tinggi untuk tombol Reset
+MainFrame.Size = UDim2.new(0, 220, 0, 220)
 MainFrame.Active = true
 MainFrame.Draggable = true
 UICorner.Parent = MainFrame
@@ -93,7 +104,7 @@ ProgressFill.BorderSizePixel = 0
 
 -- Tombol Start / Resume
 StartBtn.Parent = MainFrame
-StartBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113) -- Hijau
+StartBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
 StartBtn.Position = UDim2.new(0.1, 0, 0.35, 0)
 StartBtn.Size = UDim2.new(0.8, 0, 0.18, 0)
 StartBtn.Font = Enum.Font.GothamBold
@@ -104,7 +115,7 @@ Instance.new("UICorner", StartBtn).CornerRadius = UDim.new(0, 6)
 
 -- Tombol Pause
 StopBtn.Parent = MainFrame
-StopBtn.BackgroundColor3 = Color3.fromRGB(241, 196, 15) -- Kuning/Orange untuk Pause
+StopBtn.BackgroundColor3 = Color3.fromRGB(241, 196, 15)
 StopBtn.Position = UDim2.new(0.1, 0, 0.55, 0)
 StopBtn.Size = UDim2.new(0.8, 0, 0.18, 0)
 StopBtn.Font = Enum.Font.GothamBold
@@ -115,7 +126,7 @@ Instance.new("UICorner", StopBtn).CornerRadius = UDim.new(0, 6)
 
 -- Tombol Reset
 ResetBtn.Parent = MainFrame
-ResetBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60) -- Merah untuk Reset
+ResetBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
 ResetBtn.Position = UDim2.new(0.1, 0, 0.75, 0)
 ResetBtn.Size = UDim2.new(0.8, 0, 0.18, 0)
 ResetBtn.Font = Enum.Font.GothamBold
@@ -165,7 +176,10 @@ local function DownloadData()
                 TASDataCache[i] = HttpService:JSONDecode(response)
             else
                 warn("Gagal download CP_" .. i)
-                TASDataCache[i] = {}
+                -- Jika gagal download, coba sekali lagi atau skip
+                StatusLbl.Text = "Retrying CP_"..i
+                task.wait(1)
+                TASDataCache[i] = {} -- Mencegah crash loop
             end
         end
         
@@ -188,36 +202,30 @@ local function RunPlayback()
     Hum.PlatformStand = false 
     Hum.AutoRotate = false
     
-    -- Loop CP dimulai dari SavedCP (Bukan dari START_CP)
     for i = SavedCP, END_CP do
         if not isPlaying then break end
         
-        SavedCP = i -- Update Tracker CP
+        SavedCP = i
         local data = TASDataCache[i]
         
         if not data then continue end
         
         StatusLbl.Text = string.format("Playing: CP_%d (Frame: %d)", i, SavedFrame)
         
-        -- Loop Frame dimulai dari SavedFrame (Bukan dari 1)
-        -- Kita pakai loop numeric agar bisa start dari index tertentu
         for f = SavedFrame, #data do
             if not isPlaying then break end
             
-            SavedFrame = f -- Update Tracker Frame
+            SavedFrame = f 
             
             local frame = data[f]
             if not Char or not Root then isPlaying = false break end
 
-            -- 1. HipHeight
             if frame.HIP then Hum.HipHeight = frame.HIP end
 
-            -- 2. CFrame
             local posX, posY, posZ = frame.POS.x, frame.POS.y, frame.POS.z
             local rotY = frame.ROT or 0
             Root.CFrame = CFrame.new(posX, posY, posZ) * CFrame.Angles(0, rotY, 0)
 
-            -- 3. Velocity
             if frame.VEL then
                 local vel = Vector3.new(frame.VEL.x, frame.VEL.y, frame.VEL.z)
                 Root.AssemblyLinearVelocity = vel
@@ -226,7 +234,6 @@ local function RunPlayback()
                 end
             end
 
-            -- 4. Animation State
             if frame.STA then
                 local s = frame.STA
                 if s == "Jumping" then Hum:ChangeState(Enum.HumanoidStateType.Jumping) Hum.Jump = true
@@ -239,8 +246,6 @@ local function RunPlayback()
             RunService.Heartbeat:Wait()
         end
         
-        -- PENTING: Jika loop CP ini selesai (tidak di-pause),
-        -- Reset SavedFrame ke 1 agar CP berikutnya mulai dari awal frame.
         if isPlaying then
             SavedFrame = 1
         end
@@ -249,32 +254,26 @@ local function RunPlayback()
     end
     
     if isPlaying then
-        -- Jika loop selesai sampai akhir tanpa pause
         isPlaying = false
         StartBtn.Text = "REPLAY"
         StatusLbl.Text = "Playback Selesai."
         
-        -- Reset Tracker ke awal
         SavedCP = START_CP
         SavedFrame = 1
-        
         ResetCharacter()
+        SendNotif("TAS Playback Finished!")
     else
-        -- Jika berhenti karena tombol Pause
         StatusLbl.Text = string.format("Paused at CP_%d | Fr_%d", SavedCP, SavedFrame)
         StartBtn.Text = "RESUME"
     end
 end
 
 -- === CONTROL LOGIC ===
-
--- 1. TOMBOL START / RESUME
 StartBtn.MouseButton1Click:Connect(function()
     if isPlaying then return end
     isPlaying = true
     
     task.spawn(function()
-        -- Download dulu jika belum cache
         if not isCached then
             local downloadSuccess = DownloadData()
             if not downloadSuccess then 
@@ -284,22 +283,17 @@ StartBtn.MouseButton1Click:Connect(function()
                 return 
             end
         end
-        
-        -- Jalankan Player
         RunPlayback()
     end)
 end)
 
--- 2. TOMBOL PAUSE
 StopBtn.MouseButton1Click:Connect(function()
     if isPlaying then
-        isPlaying = false -- Ini akan menghentikan loop, tapi SavedCP & SavedFrame tersimpan
+        isPlaying = false 
         ResetCharacter()
-        -- Status update diurus di akhir fungsi RunPlayback
     end
 end)
 
--- 3. TOMBOL RESET (Hapus progress resume)
 ResetBtn.MouseButton1Click:Connect(function()
     isPlaying = false
     task.wait(0.1)
@@ -314,4 +308,5 @@ ResetBtn.MouseButton1Click:Connect(function()
     UpdateProgress(0, 1)
 end)
 
-Notify("TAS Resume System Loaded!")
+-- PANGGIL FUNGSI NOTIF YANG SUDAH DIDEFINISIKAN
+SendNotif("TAS Resume System Loaded!")
